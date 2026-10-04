@@ -1,0 +1,136 @@
+{
+  "projects": [
+    {
+      "project_id": "P01",
+      "name": "Rural Road Connectivity Phase 2",
+      "location": "Madhya Pradesh",
+      "sector": "Roads",
+      "progress": 78,
+      "planned_progress": 75,
+      "delay_days": 0,
+      "budget_used": 72,
+      "budget_total_crore": 120,
+      "contractor": "Aarav Infra Ltd"
+    },
+    {
+      "project_id": "P02",
+      "name": "District Hospital Expansion",
+      "location": "Bihar",
+      "sector": "Health",
+      "progress": 55,
+      "planned_progress": 60,
+      "delay_days": 18,
+      "budget_used": 88,
+      "budget_total_crore": 95,
+      "contractor": "MediBuild Consortium"
+    },
+    {
+      "project_id": "P03",
+      "name": "Smart Water Supply Network",
+      "location": "Rajasthan",
+      "sector": "Water",
+      "progress": 40,
+      "planned_progress": 65,
+      "delay_days": 75,
+      "budget_used": 58,
+      "budget_total_crore": 210,
+      "contractor": "Jal Seva Contractors"
+    },
+    {
+      "project_id": "P04",
+      "name": "Primary School Modernization",
+      "location": "Odisha",
+      "sector": "Education",
+      "progress": 92,
+      "planned_progress": 90,
+      "delay_days": 0,
+      "budget_used": 85,
+      "budget_total_crore": 48,
+      "contractor": "Shiksha Constructions"
+    },
+    {
+      "project_id": "P05",
+      "name": "Solar Mini-Grid Cluster",
+      "location": "Jharkhand",
+      "sector": "Energy",
+      "progress": 33,
+      "planned_progress": 55,
+      "delay_days": 96,
+      "budget_used": 61,
+      "budget_total_crore": 175,
+      "contractor": "Surya Power Works"
+    },
+    {
+      "project_id": "P06",
+      "name": "Urban Drain Desilting Program",
+      "location": "West Bengal",
+      "sector": "Urban Development",
+      "progress": 68,
+      "planned_progress": 70,
+      "delay_days": 12,
+      "budget_used": 66,
+      "budget_total_crore": 62,
+      "contractor": "MetroCivic Pvt Ltd"
+    },
+    {
+      "project_id": "P07",
+      "name": "Irrigation Canal Lining",
+      "location": "Uttar Pradesh",
+      "sector": "Agriculture",
+      "progress": 22,
+      "planned_progress": 50,
+      "delay_days": 140,
+      "budget_used": 47,
+      "budget_total_crore": 310,
+      "contractor": "Kisan Canal Builders"
+    },
+    {
+      "project_id": "P08",
+      "name": "Community Health Centre Upgrade",
+      "location": "Assam",
+      "sector": "Health",
+      "progress": 81,
+      "planned_progress": 80,
+      "delay_days": 5,
+      "budget_used": 79,
+      "budget_total_crore": 36,
+      "contractor": "NorthEast MedInfra"
+    },
+    {
+      "project_id": "P09",
+      "name": "Digital Land Records Centre",
+      "location": "Karnataka",
+      "sector": "e-Governance",
+      "progress": 48,
+      "planned_progress": 72,
+      "delay_days": 54,
+      "budget_used": 83,
+      "budget_total_crore": 28,
+      "contractor": "NexGov Systems"
+    },
+    {
+      "project_id": "P10",
+      "name": "Affordable Housing Block C",
+      "location": "Maharashtra",
+      "sector": "Housing",
+      "progress": 61,
+      "planned_progress": 63,
+      "delay_days": 8,
+      "budget_used": 59,
+      "budget_total_crore": 240,
+      "contractor": "Griha Nirman Co"
+    },
+    {
+      "project_id": "P42",
+      "name": "National Highway Package 42",
+      "location": "Chhattisgarh",
+      "sector": "Roads",
+      "progress": 42,
+      "planned_progress": 70,
+      "delay_days": 120,
+      "budget_used": 91,
+      "budget_total_crore": 450,
+      "contractor": "Highway Dynamics Ltd"
+    }
+  ]
+}

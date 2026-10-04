@@ -1,0 +1,32 @@
+{
+  "skill_name": "evaluate_project_risk",
+  "evals": [
+    {
+      "id": "eval-1",
+      "prompt": "Can you evaluate the risk for project ID 'PRJ-1001'?",
+      "expected_output": "A summary of the risk metrics for PRJ-1001, strictly based on the deterministic output of calculate_project_risk.py, identifying any major factors.",
+      "assertions": [
+        "The output must mention the overall risk score exactly as returned by the script.",
+        "The output must not invent metrics that are not provided in the script output."
+      ]
+    },
+    {
+      "id": "eval-2",
+      "prompt": "Evaluate project 'PRJ-9999'. This project is heavily delayed.",
+      "expected_output": "The agent should run the risk calculation script and report the deterministic delay risk without hallucinating metrics.",
+      "assertions": [
+        "The output must identify if the project is heavily delayed based strictly on the JSON returned by the script.",
+        "The output must extract 'delay_risk' correctly."
+      ]
+    },
+    {
+      "id": "eval-3",
+      "prompt": "What is the risk profile for PRJ-0000? I think it doesn't exist.",
+      "expected_output": "The agent should gracefully report that the project was not found, based on the error output from calculate_project_risk.py.",
+      "assertions": [
+        "The output must clearly state the project was not found.",
+        "The output must not attempt to hallucinate risk metrics for a missing project."
+      ]
+    }
+  ]
+}
