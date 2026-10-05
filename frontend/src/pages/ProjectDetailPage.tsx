@@ -10,6 +10,8 @@ import {
   Building,
   FileText,
   ShieldAlert,
+  History,
+  Flag,
 } from "lucide-react";
 
 import type { ProjectDetail360 } from "../types";
@@ -26,6 +28,9 @@ import { MilestonesTab } from "../components/project-detail/MilestonesTab";
 import { AgenciesTab } from "../components/project-detail/AgenciesTab";
 import { DocumentsTab } from "../components/project-detail/DocumentsTab";
 import { RiskAiTab } from "../components/project-detail/RiskAiTab";
+import { HistoryTab } from "../components/project-detail/HistoryTab";
+import { SnapshotModal } from "../components/project-detail/SnapshotModal";
+import { OutcomeModal } from "../components/project-detail/OutcomeModal";
 
 type TabKey =
   | "overview"
@@ -35,7 +40,8 @@ type TabKey =
   | "milestones"
   | "agencies"
   | "documents"
-  | "risk_ai";
+  | "risk_ai"
+  | "history";
 
 export const ProjectDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -92,6 +98,18 @@ export const ProjectDetailPage: React.FC = () => {
   }
 
   const { project, risk } = detail;
+  const [showSnapshotModal, setShowSnapshotModal] = useState(false);
+  const [showOutcomeModal, setShowOutcomeModal] = useState(false);
+
+  const handleSnapshotCreated = () => {
+    setShowSnapshotModal(false);
+    loadProject(); // Refresh to update any cached data
+  };
+
+  const handleOutcomeCreated = () => {
+    setShowOutcomeModal(false);
+    loadProject(); // Refresh to update any cached data
+  };
 
   const tabs: { key: TabKey; label: string; icon: React.FC<{ className?: string }> }[] = [
     { key: "overview", label: "Overview", icon: LayoutDashboard },
@@ -102,6 +120,7 @@ export const ProjectDetailPage: React.FC = () => {
     { key: "agencies", label: "Agencies & Contractors", icon: Building },
     { key: "documents", label: "Documents", icon: FileText },
     { key: "risk_ai", label: "Risk & AI Analysis", icon: ShieldAlert },
+    { key: "history", label: "History", icon: History },
   ];
 
   return (
@@ -134,6 +153,20 @@ export const ProjectDetailPage: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-3">
+            <button
+              onClick={() => setShowSnapshotModal(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border-default)] bg-[var(--color-bg-surface-soft)] px-3 py-1.5 text-xs font-medium text-[var(--color-text-primary)] hover:bg-[var(--color-bg-accent)] hover:border-[var(--color-brand-primary)] transition shadow-[var(--shadow-xs)]"
+            >
+              <History className="h-3.5 w-3.5" />
+              <span>Record Snapshot</span>
+            </button>
+            <button
+              onClick={() => setShowOutcomeModal(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border-default)] bg-[var(--color-bg-surface-soft)] px-3 py-1.5 text-xs font-medium text-[var(--color-text-primary)] hover:bg-[var(--color-bg-accent)] hover:border-[var(--color-brand-primary)] transition shadow-[var(--shadow-xs)]"
+            >
+              <Flag className="h-3.5 w-3.5" />
+              <span>Record Outcome</span>
+            </button>
             <RiskBadge
               level={risk.overall_level}
               score={risk.overall_score}
@@ -179,7 +212,24 @@ export const ProjectDetailPage: React.FC = () => {
           <DocumentsTab projectId={project.project_id} initialDocuments={detail.documents} />
         )}
         {activeTab === "risk_ai" && <RiskAiTab detail={detail} />}
+        {activeTab === "history" && <HistoryTab projectId={project.project_id} projectName={project.name} />}
       </div>
+
+      <SnapshotModal
+        isOpen={showSnapshotModal}
+        onClose={() => setShowSnapshotModal(false)}
+        project={project}
+        risk={risk}
+        onSuccess={handleSnapshotCreated}
+      />
+
+      <OutcomeModal
+        isOpen={showOutcomeModal}
+        onClose={() => setShowOutcomeModal(false)}
+        project={project}
+        risk={risk}
+        onSuccess={handleOutcomeCreated}
+      />
     </div>
   );
 };

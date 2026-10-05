@@ -165,3 +165,69 @@ export interface AuthUser {
   displayName: string | null;
   emailVerified: boolean;
 }
+
+export interface RiskSnapshot {
+  overall_score: number;
+  overall_level: string;
+  progress_risk: number;
+  delay_risk: number;
+  budget_risk: number;
+  progress_gap: number;
+  major_factors: string[];
+}
+
+export interface ProjectSnapshot {
+  project_id: string;
+  snapshot_period: string;
+  recorded_at: string;
+  progress: number;
+  planned_progress: number;
+  delay_days: number;
+  budget_used: number;
+  budget_total_crore: number;
+  contractor: string;
+  sector: string;
+  location: string;
+  risk_snapshot?: RiskSnapshot;
+}
+
+export interface SnapshotCreateRequest {
+  snapshot_period?: string;
+}
+
+export interface SnapshotListResponse {
+  project_id: string;
+  snapshots: ProjectSnapshot[];
+  total_count: number;
+}
+
+export interface ProjectOutcome {
+  project_id: string;
+  completion_status: "COMPLETED" | "TERMINATED" | "SUSPENDED" | "ON_HOLD";
+  actual_completion_date: string;
+  planned_completion_date?: string;
+  final_progress: number;
+  final_delay_days: number;
+  final_budget_used: number;
+  final_budget_variance_percent?: number;
+  final_cost_crore?: number;
+  recorded_at: string;
+  recorded_by_uid: string;
+  notes?: string;
+}
+
+export interface ProjectOutcomeCreateRequest {
+  completion_status: "COMPLETED" | "TERMINATED" | "SUSPENDED" | "ON_HOLD";
+  actual_completion_date: string;
+  planned_completion_date?: string;
+  final_progress: number;
+  final_budget_used: number;
+  final_budget_variance_percent?: number;
+  final_cost_crore?: number;
+  notes?: string;
+}
+
+export interface ProjectOutcomeResponse {
+  project_id: string;
+  outcome: ProjectOutcome | null;
+}

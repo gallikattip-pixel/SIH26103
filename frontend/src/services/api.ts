@@ -8,8 +8,13 @@ import type {
   ProgressMetrics,
   ProjectDetail360,
   ProjectListItem,
+  ProjectOutcomeCreateRequest,
+  ProjectOutcomeResponse,
   ProjectRecord,
+  ProjectSnapshot,
   RiskBreakdown,
+  SnapshotCreateRequest,
+  SnapshotListResponse,
   TimelineMetrics,
 } from "../types";
 
@@ -189,4 +194,57 @@ export const sendAiChat = async (payload: ChatRequest): Promise<ChatResponse> =>
     body: JSON.stringify(payload),
   });
   return handleResponse<ChatResponse>(res);
+};
+
+export const createProjectSnapshot = async (
+  projectId: string,
+  payload: SnapshotCreateRequest
+): Promise<ProjectSnapshot> => {
+  const res = await fetch(`${API_BASE_URL}/projects/${encodeURIComponent(projectId)}/snapshots`, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify(payload),
+  });
+  return handleResponse<ProjectSnapshot>(res);
+};
+
+export const fetchProjectSnapshots = async (
+  projectId: string
+): Promise<SnapshotListResponse> => {
+  const res = await fetch(`${API_BASE_URL}/projects/${encodeURIComponent(projectId)}/snapshots`, {
+    headers: getHeaders(),
+  });
+  return handleResponse<SnapshotListResponse>(res);
+};
+
+export const fetchProjectSnapshot = async (
+  projectId: string,
+  period: string
+): Promise<ProjectSnapshot> => {
+  const res = await fetch(
+    `${API_BASE_URL}/projects/${encodeURIComponent(projectId)}/snapshots/${encodeURIComponent(period)}`,
+    { headers: getHeaders() }
+  );
+  return handleResponse<ProjectSnapshot>(res);
+};
+
+export const createProjectOutcome = async (
+  projectId: string,
+  payload: ProjectOutcomeCreateRequest
+): Promise<ProjectOutcomeResponse> => {
+  const res = await fetch(`${API_BASE_URL}/projects/${encodeURIComponent(projectId)}/outcome`, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify(payload),
+  });
+  return handleResponse<ProjectOutcomeResponse>(res);
+};
+
+export const fetchProjectOutcome = async (
+  projectId: string
+): Promise<ProjectOutcomeResponse> => {
+  const res = await fetch(`${API_BASE_URL}/projects/${encodeURIComponent(projectId)}/outcome`, {
+    headers: getHeaders(),
+  });
+  return handleResponse<ProjectOutcomeResponse>(res);
 };

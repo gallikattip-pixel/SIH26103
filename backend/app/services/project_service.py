@@ -5,7 +5,7 @@ No fake data, no mock fallbacks.
 """
 
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 import threading
 from typing import Any
@@ -29,6 +29,13 @@ from app.services.firebase_service import (
     fetch_single_project_from_firebase,
     get_firebase_status,
     save_project_to_firebase,
+    save_project_snapshot_to_firebase,
+    fetch_project_snapshot_from_firebase,
+    fetch_all_project_snapshots_from_firebase,
+    check_snapshot_exists,
+    save_project_outcome_to_firebase,
+    fetch_project_outcome_from_firebase,
+    check_outcome_exists,
 )
 from app.services.risk_engine import calculate_risk
 
@@ -480,4 +487,367 @@ def create_new_project(project_data: ProjectRecord) -> ProjectListItem:
             **project_dict,
             risk=risk,
         )
+
+
+# =========================================================
+# HISTORICAL PROJECT SNAPSHOTS
+# =========================================================
+
+def _get_current_utc_period() -> str:
+    """Return current UTC period in YYYY-MM format."""
+    return datetime.now(timezone.utc).strftime("%Y-%m")
+
+
+def _build_snapshot_from_project(project: ProjectRecord, period: str) -> dict[str, Any]:
+    """Build snapshot data dictionary from a ProjectRecord.
+
+    Captures raw project metrics at a point in time.
+    Also includes a derived risk snapshot for historical auditing ONLY.
+    """
+    from app.services.risk_engine import calculate_risk
+    risk = calculate_risk(project)
+
+    return {
+        "project_id": project.project_id,
+        "snapshot_period": period,
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+        "progress": project.progress,
+        "planned_progress": project.planned_progress,
+        "delay_days": project.delay_days,
+        "budget_used": project.budget_used,
+        "budget_total_crore": project.budget_total_crore,
+        "contractor": project.contractor,
+        "sector": project.sector,
+        "location": project.location,
+        "risk_snapshot": {
+            "overall_score": risk.overall_score,
+            "overall_level": risk.overall_level,
+            "progress_risk": risk.progress_risk,
+            "delay_risk": risk.delay_risk,
+            "budget_risk": risk.budget_risk,
+            "progress_gap": risk.progress_gap,
+            "major_factors": risk.major_factors,
+        },
+    }
+
+
+def _validate_snapshot_data(data: dict[str, Any]) -> None:
+    """Validate snapshot data against domain constraints.
+
+    Raises:
+        ValueError: If any field is invalid
+    """
+    # Validate progress range
+    if not (0 <= data["progress"] <= 100):
+        raise ValueError(f"progress must be between 0 and 100, got {data['progress']}")
+
+    if not (0 <= data["planned_progress"] <= 100):
+        raise ValueError(f"planned_progress must be between 0 and 100, got {data['planned_progress']}")
+
+    if data["delay_days"] < 0:
+        raise ValueError(f"delay_days must be non-negative, got {data['delay_days']}")
+
+    if not (0 <= data["budget_used"] <= 100):
+        raise ValueError(f"budget_used must be between 0 and 100, got {data['budget_used']}")
+
+    if data["budget_total_crore"] < 0:
+        raise ValueError(f"budget_total_crore must be non-negative, got {data['budget_total_crore']}")
+
+    if not data.get("project_id"):
+        raise ValueError("project_id is required")
+
+    if not data.get("snapshot_period"):
+        raise ValueError("snapshot_period is required")
+
+    if not data.get("recorded_at"):
+        raise ValueError("recorded_at is required")
+
+
+def create_project_snapshot(
+    project_id: str,
+    snapshot_period: str | None = None,
+) -> dict[str, Any]:
+    """Create a historical snapshot for a project.
+
+    Reads the current authoritative project metrics from the database
+    and creates an immutable snapshot for the given period.
+
+    Args:
+        project_id: Project identifier
+        snapshot_period: Period key in YYYY-MM format. Defaults to current UTC month.
+
+    Returns:
+        The created snapshot data dictionary
+
+    Raises:
+        ValueError: If project not found, period invalid, or snapshot already exists
+        RuntimeError: If Firebase is unavailable
+    """
+    # Resolve period (default to current UTC month)
+    if snapshot_period is None:
+        snapshot_period = _get_current_utc_period()
+
+    # Validate period format
+    import re
+    if not re.match(r"^\d{4}-\d{2}$", snapshot_period):
+        raise ValueError("snapshot_period must be in YYYY-MM format")
+    year, month = map(int, snapshot_period.split("-"))
+    if not (2000 <= year <= 2100) or not (1 <= month <= 12):
+        raise ValueError("Invalid year or month in snapshot_period")
+
+    # Fetch current project (authoritative source)
+    project = get_project_by_id(project_id)
+    if not project:
+        raise ValueError(f"Project '{project_id}' not found in database")
+
+    # Check for existing snapshot (idempotency)
+    if check_snapshot_exists(project_id, snapshot_period):
+        existing = fetch_project_snapshot_from_firebase(project_id, snapshot_period)
+        if existing:
+            raise ValueError(
+                f"Snapshot for project '{project_id}' period '{snapshot_period}' already exists. "
+                f"Use explicit correction mechanism if update is required."
+            )
+
+    # Build snapshot from current project state
+    snapshot_data = _build_snapshot_from_project(project, snapshot_period)
+
+    # Validate snapshot data
+    _validate_snapshot_data(snapshot_data)
+
+    # Save to Firebase
+    success = save_project_snapshot_to_firebase(project_id, snapshot_period, snapshot_data)
+    if not success:
+        raise RuntimeError(
+            f"Failed to save snapshot for project '{project_id}' period '{snapshot_period}' "
+            f"to Firebase Realtime Database."
+        )
+
+    return snapshot_data
+
+
+def get_project_snapshot(
+    project_id: str,
+    period: str,
+) -> dict[str, Any] | None:
+    """Retrieve a specific historical snapshot for a project.
+
+    Args:
+        project_id: Project identifier
+        period: Period key in YYYY-MM format
+
+    Returns:
+        Snapshot data dictionary if found, None otherwise
+
+    Raises:
+        RuntimeError: If Firebase is unavailable
+    """
+    # Validate period format
+    import re
+    if not re.match(r"^\d{4}-\d{2}$", period):
+        raise ValueError("period must be in YYYY-MM format")
+
+    snapshot = fetch_project_snapshot_from_firebase(project_id, period)
+    return snapshot
+
+
+def get_project_snapshots(
+    project_id: str,
+) -> list[dict[str, Any]]:
+    """Retrieve all historical snapshots for a project, sorted chronologically.
+
+    Args:
+        project_id: Project identifier
+
+    Returns:
+        List of snapshot data dictionaries, sorted by snapshot_period ascending
+
+    Raises:
+        RuntimeError: If Firebase is unavailable
+    """
+    snapshots_map = fetch_all_project_snapshots_from_firebase(project_id)
+
+    if snapshots_map is None:
+        raise RuntimeError(
+            f"Unable to connect to Firebase Realtime Database to fetch snapshots for '{project_id}'."
+        )
+
+    # Convert to list and sort by period
+    snapshots = list(snapshots_map.values())
+    snapshots.sort(key=lambda s: s.get("snapshot_period", ""))
+
+    return snapshots
+
+
+# =========================================================
+# PROJECT OUTCOMES
+# =========================================================
+
+def _build_outcome_from_project(
+    project: ProjectRecord,
+    payload: dict[str, Any],
+    user_uid: str,
+) -> dict[str, Any]:
+    """Build outcome data dictionary from a ProjectRecord and payload.
+
+    Calculates derived fields where possible from authoritative data.
+    """
+    from datetime import datetime, timezone
+
+    # Calculate final delay days from dates if both provided
+    final_delay_days = payload.get("final_delay_days", 0)
+    planned_completion_date = payload.get("planned_completion_date")
+    actual_completion_date = payload.get("actual_completion_date")
+
+    if planned_completion_date and actual_completion_date:
+        try:
+            planned = datetime.strptime(planned_completion_date, "%Y-%m-%d")
+            actual = datetime.strptime(actual_completion_date, "%Y-%m-%d")
+            delta = (actual - planned).days
+            final_delay_days = max(0, delta)
+        except (ValueError, TypeError):
+            pass  # Use provided final_delay_days
+
+    # Calculate budget variance if final cost provided
+    final_budget_variance = payload.get("final_budget_variance_percent")
+    final_cost = payload.get("final_cost_crore")
+    if final_cost is not None and project.budget_total_crore > 0:
+        variance = ((final_cost - project.budget_total_crore) / project.budget_total_crore) * 100
+        final_budget_variance = round(variance, 2)
+
+    return {
+        "project_id": project.project_id,
+        "completion_status": payload["completion_status"].upper(),
+        "actual_completion_date": payload["actual_completion_date"],
+        "planned_completion_date": planned_completion_date,
+        "final_progress": payload["final_progress"],
+        "final_delay_days": final_delay_days,
+        "final_budget_used": payload["final_budget_used"],
+        "final_budget_variance_percent": final_budget_variance,
+        "final_cost_crore": final_cost,
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+        "recorded_by_uid": user_uid,
+        "notes": payload.get("notes"),
+    }
+
+
+def _validate_outcome_data(data: dict[str, Any], project: ProjectRecord) -> None:
+    """Validate outcome data against domain constraints and project state.
+
+    Raises:
+        ValueError: If any field is invalid or project not eligible for completion
+    """
+    # Validate completion status
+    allowed_statuses = {"COMPLETED", "TERMINATED", "SUSPENDED", "ON_HOLD"}
+    if data.get("completion_status", "").upper() not in allowed_statuses:
+        raise ValueError(f"completion_status must be one of {allowed_statuses}")
+
+    # Validate dates
+    actual_date = data.get("actual_completion_date")
+    planned_date = data.get("planned_completion_date")
+
+    if not actual_date:
+        raise ValueError("actual_completion_date is required")
+
+    try:
+        actual = datetime.strptime(actual_date, "%Y-%m-%d")
+        if planned_date:
+            planned = datetime.strptime(planned_date, "%Y-%m-%d")
+            if actual < planned:
+                # Allow actual before planned (early completion)
+                pass
+    except ValueError:
+        raise ValueError("Invalid date format. Use YYYY-MM-DD.")
+
+    # Validate numeric ranges
+    final_progress = data.get("final_progress", 0)
+    if not (0 <= final_progress <= 100):
+        raise ValueError(f"final_progress must be between 0 and 100, got {final_progress}")
+
+    final_budget_used = data.get("final_budget_used", 0)
+    if not (0 <= final_budget_used <= 100):
+        raise ValueError(f"final_budget_used must be between 0 and 100, got {final_budget_used}")
+
+    final_delay = data.get("final_delay_days", 0)
+    if final_delay < 0:
+        raise ValueError(f"final_delay_days must be non-negative, got {final_delay}")
+
+    # Validate project eligibility for completion
+    # Project must exist and have a valid current state
+    if project.progress < 0:
+        raise ValueError("Project has invalid progress state")
+
+    # If project is already marked COMPLETED, prevent duplicate
+    # This is handled at API level via check_outcome_exists
+
+
+def create_project_outcome(
+    project_id: str,
+    payload: dict[str, Any],
+    user_uid: str,
+) -> dict[str, Any]:
+    """Create a completion outcome for a project.
+
+    Reads the current authoritative project metrics from the database
+    and creates an immutable outcome record.
+
+    Args:
+        project_id: Project identifier
+        payload: Outcome data from request
+        user_uid: Firebase UID of the officer recording the outcome
+
+    Returns:
+        The created outcome data dictionary
+
+    Raises:
+        ValueError: If project not found, outcome already exists, or validation fails
+        RuntimeError: If Firebase is unavailable
+    """
+    # Fetch current project (authoritative source)
+    project = get_project_by_id(project_id)
+    if not project:
+        raise ValueError(f"Project '{project_id}' not found in database")
+
+    # Check for existing outcome (immutability)
+    if check_outcome_exists(project_id):
+        existing = fetch_project_outcome_from_firebase(project_id)
+        if existing:
+            raise ValueError(
+                f"Outcome for project '{project_id}' already exists. "
+                f"Use explicit correction mechanism if update is required."
+            )
+
+    # Build outcome from project + payload
+    outcome_data = _build_outcome_from_project(project, payload, user_uid)
+
+    # Validate outcome data
+    _validate_outcome_data(outcome_data, project)
+
+    # Save to Firebase
+    success = save_project_outcome_to_firebase(project_id, outcome_data)
+    if not success:
+        raise RuntimeError(
+            f"Failed to save outcome for project '{project_id}' "
+            f"to Firebase Realtime Database."
+        )
+
+    return outcome_data
+
+
+def get_project_outcome(
+    project_id: str,
+) -> dict[str, Any] | None:
+    """Retrieve the completion outcome for a project.
+
+    Args:
+        project_id: Project identifier
+
+    Returns:
+        Outcome data dictionary if found, None otherwise
+
+    Raises:
+        RuntimeError: If Firebase is unavailable
+    """
+    outcome = fetch_project_outcome_from_firebase(project_id)
+    return outcome
 

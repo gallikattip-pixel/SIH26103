@@ -8,6 +8,10 @@ from app.config import (
     RATE_LIMIT_PROJECT_CREATE_WINDOW,
     RATE_LIMIT_READS_LIMIT,
     RATE_LIMIT_READS_WINDOW,
+    RATE_LIMIT_SNAPSHOT_CREATE_LIMIT,
+    RATE_LIMIT_SNAPSHOT_CREATE_WINDOW,
+    RATE_LIMIT_OUTCOME_CREATE_LIMIT,
+    RATE_LIMIT_OUTCOME_CREATE_WINDOW,
 )
 from app.core.rate_limiter import apply_rate_limit, resolve_client_identity
 from app.core.security import UserRole, get_optional_user, require_roles
@@ -23,8 +27,20 @@ from app.models.project import (
     RiskBreakdown,
     TimelineMetrics,
 )
+from app.models.snapshot import (
+    ProjectSnapshot,
+    SnapshotCreateRequest,
+    SnapshotListResponse,
+)
+from app.models.outcome import (
+    ProjectOutcome,
+    ProjectOutcomeCreateRequest,
+    ProjectOutcomeResponse,
+)
 from app.services.project_service import (
     create_new_project,
+    create_project_outcome,
+    create_project_snapshot,
     get_all_projects_enriched,
     get_project_360,
     get_project_agencies,
@@ -32,8 +48,11 @@ from app.services.project_service import (
     get_project_documents,
     get_project_financial,
     get_project_milestones,
+    get_project_outcome,
     get_project_progress,
     get_project_risk,
+    get_project_snapshot,
+    get_project_snapshots,
     get_project_timeline,
 )
 
@@ -235,3 +254,215 @@ def get_risk(project_id: str) -> RiskBreakdown:
             detail=f"Project '{project_id}' not found.",
         )
     return risk
+
+
+# =========================================================
+# HISTORICAL PROJECT SNAPSHOTS
+# =========================================================
+
+@router.post(
+    "/{project_id}/snapshots",
+    response_model=ProjectSnapshot,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_snapshot(
+    project_id: str,
+    payload: SnapshotCreateRequest,
+    request: Request,
+    response: Response,
+    current_user: dict[str, Any] = Depends(require_roles([UserRole.ADMIN, UserRole.OFFICER])),
+) -> ProjectSnapshot:
+    """
+    Create a historical snapshot for a project.
+
+    Captures the current authoritative project metrics as an immutable
+    historical record for the specified period (defaults to current UTC month).
+
+    Requires ADMIN or OFFICER role (401 unauthenticated, 403 viewer).
+    Rate-limited by user identity.
+    Prevents duplicate snapshots for the same project and period.
+    """
+    uploader_uid = current_user.get("uid")
+    if uploader_uid:
+        apply_rate_limit(
+            request=request,
+            response=response,
+            scope="snapshot_create",
+            identity=f"user:{uploader_uid}",
+            limit=RATE_LIMIT_SNAPSHOT_CREATE_LIMIT,
+            window_seconds=RATE_LIMIT_SNAPSHOT_CREATE_WINDOW,
+        )
+
+    try:
+        snapshot_data = create_project_snapshot(
+            project_id=project_id,
+            snapshot_period=payload.snapshot_period,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        )
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        )
+
+    return ProjectSnapshot(**snapshot_data)
+
+
+@router.get("/{project_id}/snapshots", response_model=SnapshotListResponse)
+def list_snapshots(project_id: str) -> SnapshotListResponse:
+    """
+    Retrieve all historical snapshots for a project.
+
+    Returns snapshots in chronological order (oldest first).
+    """
+    try:
+        snapshots = get_project_snapshots(project_id)
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        )
+
+    # Verify project exists
+    project = get_project_by_id(project_id)
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Project '{project_id}' was not found in the database.",
+        )
+
+    return SnapshotListResponse(
+        project_id=project_id,
+        snapshots=[ProjectSnapshot(**s) for s in snapshots],
+        total_count=len(snapshots),
+    )
+
+
+@router.get("/{project_id}/snapshots/{period}", response_model=ProjectSnapshot)
+def get_snapshot(project_id: str, period: str) -> ProjectSnapshot:
+    """
+    Retrieve a specific historical snapshot for a project.
+
+    Period must be in YYYY-MM format (e.g., 2026-10).
+    """
+    # Validate period format early
+    import re
+    if not re.match(r"^\d{4}-\d{2}$", period):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="period must be in YYYY-MM format",
+        )
+
+    try:
+        snapshot = get_project_snapshot(project_id, period)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        )
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        )
+
+    if not snapshot:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Snapshot for project '{project_id}' period '{period}' not found.",
+        )
+
+    return ProjectSnapshot(**snapshot)
+
+
+# =========================================================
+# PROJECT OUTCOMES
+# =========================================================
+
+@router.post(
+    "/{project_id}/outcome",
+    response_model=ProjectOutcomeResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_outcome(
+    project_id: str,
+    payload: ProjectOutcomeCreateRequest,
+    request: Request,
+    response: Response,
+    current_user: dict[str, Any] = Depends(require_roles([UserRole.ADMIN, UserRole.OFFICER])),
+) -> ProjectOutcomeResponse:
+    """
+    Record a project completion outcome.
+
+    Captures the final authoritative project state as an immutable
+    completion record. Only one outcome per project is allowed.
+
+    Requires ADMIN or OFFICER role (401 unauthenticated, 403 viewer).
+    Rate-limited by user identity.
+    Prevents duplicate outcomes for the same project.
+    """
+    uploader_uid = current_user.get("uid")
+    if uploader_uid:
+        apply_rate_limit(
+            request=request,
+            response=response,
+            scope="outcome_create",
+            identity=f"user:{uploader_uid}",
+            limit=RATE_LIMIT_OUTCOME_CREATE_LIMIT,
+            window_seconds=RATE_LIMIT_OUTCOME_CREATE_WINDOW,
+        )
+
+    try:
+        outcome_data = create_project_outcome(
+            project_id=project_id,
+            payload=payload.model_dump(),
+            user_uid=uploader_uid or "unknown",
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        )
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        )
+
+    return ProjectOutcomeResponse(
+        project_id=project_id,
+        outcome=ProjectOutcome(**outcome_data),
+    )
+
+
+@router.get("/{project_id}/outcome", response_model=ProjectOutcomeResponse)
+def get_outcome(project_id: str) -> ProjectOutcomeResponse:
+    """
+    Retrieve the completion outcome for a project.
+
+    Returns the outcome if recorded, otherwise returns null outcome.
+    """
+    try:
+        outcome = get_project_outcome(project_id)
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        )
+
+    # Verify project exists
+    project = get_project_by_id(project_id)
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Project '{project_id}' was not found in the database.",
+        )
+
+    return ProjectOutcomeResponse(
+        project_id=project_id,
+        outcome=ProjectOutcome(**outcome) if outcome else None,
+    )

@@ -379,3 +379,315 @@ def get_document_from_firebase(project_id: str, doc_id: str) -> dict | None:
         logger.warning(f"Firebase REST get document error: {exc}")
 
     return None
+
+
+# =========================================================
+# HISTORICAL PROJECT SNAPSHOTS
+# =========================================================
+
+def save_project_snapshot_to_firebase(
+    project_id: str,
+    period: str,
+    snapshot_data: dict
+) -> bool:
+    """Save a project snapshot to Firebase Realtime Database.
+
+    Snapshots are stored under: project_snapshots/{project_id}/{period}
+    Uses PUT to ensure idempotency — if a snapshot already exists for the
+    same project and period, it will be overwritten ONLY if explicitly
+    intended. The service layer should check existence first for idempotent
+    create behavior.
+
+    Args:
+        project_id: Project identifier
+        period: Period key in YYYY-MM format
+        snapshot_data: Snapshot data dictionary
+
+    Returns:
+        True if saved successfully, False otherwise
+    """
+    if not FIREBASE_DATABASE_URL:
+        return False
+
+    clean_id = project_id.strip().upper()
+    clean_period = period.strip()
+
+    if _init_firebase_admin():
+        try:
+            from firebase_admin import db
+            ref = db.reference(f"project_snapshots/{clean_id}/{clean_period}")
+            ref.set(snapshot_data)
+            return True
+        except Exception as exc:
+            logger.warning(f"Firebase Admin save snapshot error: {exc}")
+
+    try:
+        url = f"{FIREBASE_DATABASE_URL.rstrip('/')}/project_snapshots/{clean_id}/{clean_period}.json"
+        client = get_firebase_http_client()
+        resp = client.put(url, json=snapshot_data)
+        return resp.status_code == 200
+    except Exception as exc:
+        logger.warning(f"Firebase REST save snapshot error: {exc}")
+        return False
+
+
+def fetch_project_snapshot_from_firebase(
+    project_id: str,
+    period: str
+) -> dict | None:
+    """Fetch a single project snapshot from Firebase.
+
+    Args:
+        project_id: Project identifier
+        period: Period key in YYYY-MM format
+
+    Returns:
+        Snapshot data dict if found, None if not found or error
+    """
+    clean_id = project_id.strip().upper()
+    clean_period = period.strip()
+
+    if not FIREBASE_DATABASE_URL:
+        return None
+
+    if _init_firebase_admin():
+        try:
+            from firebase_admin import db
+            ref = db.reference(f"project_snapshots/{clean_id}/{clean_period}")
+            data = ref.get()
+            if data is None:
+                return None
+            if isinstance(data, dict):
+                return data
+            return None
+        except Exception as exc:
+            logger.warning(f"Firebase Admin fetch snapshot error: {exc}. Trying REST API.")
+
+    try:
+        url = f"{FIREBASE_DATABASE_URL.rstrip('/')}/project_snapshots/{clean_id}/{clean_period}.json"
+        client = get_firebase_http_client()
+        resp = client.get(url)
+        if resp.status_code == 200:
+            data = resp.json()
+            if data is None:
+                return None
+            if isinstance(data, dict):
+                return data
+            return None
+        elif resp.status_code == 404:
+            return None
+        else:
+            logger.warning(f"Firebase REST fetch snapshot returned HTTP {resp.status_code}: {resp.text}")
+            return None
+    except Exception as exc:
+        logger.warning(f"Firebase REST fetch snapshot connection error: {exc}")
+        raise RuntimeError(f"Unable to connect to Firebase Realtime Database: {exc}")
+
+
+def fetch_all_project_snapshots_from_firebase(project_id: str) -> dict[str, Any] | None:
+    """Fetch all snapshots for a project from Firebase.
+
+    Returns:
+        - dict with period keys mapping to snapshot data if snapshots exist
+        - empty dict {} if connected successfully but no snapshots (Empty State)
+        - None if Firebase is unconfigured or connection failed (Error State)
+    """
+    clean_id = project_id.strip().upper()
+
+    if not FIREBASE_DATABASE_URL:
+        return None
+
+    if _init_firebase_admin():
+        try:
+            from firebase_admin import db
+            ref = db.reference(f"project_snapshots/{clean_id}")
+            data = ref.get()
+            if data is None or data == {}:
+                return {}
+            return data if isinstance(data, dict) else {}
+        except Exception as exc:
+            logger.warning(f"Firebase Admin fetch all snapshots error: {exc}. Trying REST API.")
+
+    try:
+        url = f"{FIREBASE_DATABASE_URL.rstrip('/')}/project_snapshots/{clean_id}.json"
+        client = get_firebase_http_client()
+        resp = client.get(url)
+        if resp.status_code == 200:
+            data = resp.json()
+            if data is None or data == {}:
+                return {}
+            return data if isinstance(data, dict) else {}
+        else:
+            logger.warning(f"Firebase REST fetch all snapshots returned HTTP {resp.status_code}: {resp.text}")
+            return None
+    except Exception as exc:
+        logger.warning(f"Firebase REST fetch all snapshots connection error: {exc}")
+        return None
+
+
+def check_snapshot_exists(project_id: str, period: str) -> bool:
+    """Check if a snapshot already exists for the given project and period.
+
+    This is a lightweight check to support idempotent create behavior.
+
+    Args:
+        project_id: Project identifier
+        period: Period key in YYYY-MM format
+
+    Returns:
+        True if snapshot exists, False otherwise or on error
+    """
+    clean_id = project_id.strip().upper()
+    clean_period = period.strip()
+
+    if not FIREBASE_DATABASE_URL:
+        return False
+
+    if _init_firebase_admin():
+        try:
+            from firebase_admin import db
+            ref = db.reference(f"project_snapshots/{clean_id}/{clean_period}")
+            data = ref.get(shallow=True)
+            return data is not None
+        except Exception as exc:
+            logger.warning(f"Firebase Admin check snapshot exists error: {exc}")
+
+    try:
+        url = f"{FIREBASE_DATABASE_URL.rstrip('/')}/project_snapshots/{clean_id}/{clean_period}.json?shallow=true"
+        client = get_firebase_http_client()
+        resp = client.get(url, timeout=3.0)
+        if resp.status_code == 200:
+            data = resp.json()
+            return data is not None
+        return False
+    except Exception as exc:
+        logger.warning(f"Firebase REST check snapshot exists error: {exc}")
+        return False
+
+
+# =========================================================
+# PROJECT OUTCOMES
+# =========================================================
+
+def save_project_outcome_to_firebase(
+    project_id: str,
+    outcome_data: dict
+) -> bool:
+    """Save a project outcome to Firebase Realtime Database.
+
+    Outcomes are stored under: project_outcomes/{project_id}
+    Uses PUT — only one outcome per project.
+
+    Args:
+        project_id: Project identifier
+        outcome_data: Outcome data dictionary
+
+    Returns:
+        True if saved successfully, False otherwise
+    """
+    if not FIREBASE_DATABASE_URL:
+        return False
+
+    clean_id = project_id.strip().upper()
+
+    if _init_firebase_admin():
+        try:
+            from firebase_admin import db
+            ref = db.reference(f"project_outcomes/{clean_id}")
+            ref.set(outcome_data)
+            return True
+        except Exception as exc:
+            logger.warning(f"Firebase Admin save outcome error: {exc}")
+
+    try:
+        url = f"{FIREBASE_DATABASE_URL.rstrip('/')}/project_outcomes/{clean_id}.json"
+        client = get_firebase_http_client()
+        resp = client.put(url, json=outcome_data)
+        return resp.status_code == 200
+    except Exception as exc:
+        logger.warning(f"Firebase REST save outcome error: {exc}")
+        return False
+
+
+def fetch_project_outcome_from_firebase(project_id: str) -> dict | None:
+    """Fetch a project outcome from Firebase.
+
+    Args:
+        project_id: Project identifier
+
+    Returns:
+        Outcome data dict if found, None if not found or error
+    """
+    clean_id = project_id.strip().upper()
+
+    if not FIREBASE_DATABASE_URL:
+        return None
+
+    if _init_firebase_admin():
+        try:
+            from firebase_admin import db
+            ref = db.reference(f"project_outcomes/{clean_id}")
+            data = ref.get()
+            if data is None:
+                return None
+            if isinstance(data, dict):
+                return data
+            return None
+        except Exception as exc:
+            logger.warning(f"Firebase Admin fetch outcome error: {exc}. Trying REST API.")
+
+    try:
+        url = f"{FIREBASE_DATABASE_URL.rstrip('/')}/project_outcomes/{clean_id}.json"
+        client = get_firebase_http_client()
+        resp = client.get(url)
+        if resp.status_code == 200:
+            data = resp.json()
+            if data is None:
+                return None
+            if isinstance(data, dict):
+                return data
+            return None
+        elif resp.status_code == 404:
+            return None
+        else:
+            logger.warning(f"Firebase REST fetch outcome returned HTTP {resp.status_code}: {resp.text}")
+            return None
+    except Exception as exc:
+        logger.warning(f"Firebase REST fetch outcome connection error: {exc}")
+        raise RuntimeError(f"Unable to connect to Firebase Realtime Database: {exc}")
+
+
+def check_outcome_exists(project_id: str) -> bool:
+    """Check if a project outcome already exists.
+
+    Args:
+        project_id: Project identifier
+
+    Returns:
+        True if outcome exists, False otherwise or on error
+    """
+    clean_id = project_id.strip().upper()
+
+    if not FIREBASE_DATABASE_URL:
+        return False
+
+    if _init_firebase_admin():
+        try:
+            from firebase_admin import db
+            ref = db.reference(f"project_outcomes/{clean_id}")
+            data = ref.get(shallow=True)
+            return data is not None
+        except Exception as exc:
+            logger.warning(f"Firebase Admin check outcome exists error: {exc}")
+
+    try:
+        url = f"{FIREBASE_DATABASE_URL.rstrip('/')}/project_outcomes/{clean_id}.json?shallow=true"
+        client = get_firebase_http_client()
+        resp = client.get(url, timeout=3.0)
+        if resp.status_code == 200:
+            data = resp.json()
+            return data is not None
+        return False
+    except Exception as exc:
+        logger.warning(f"Firebase REST check outcome exists error: {exc}")
+        return False
